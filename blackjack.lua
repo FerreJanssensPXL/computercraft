@@ -182,6 +182,13 @@ while true do
         local result = playBlackjack()
         payout(bet, result)
         print("Round complete.")
+        print("Make sure to collect your winnings from the bet chest.")
+        print("Play again? (y/n)")
+        local again = read()
+        if again ~= "y" then
+            print("Thanks for playing! Goodbye.")
+            break
+        end
         print("Place diamonds for another round.")
     end
 end
