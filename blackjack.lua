@@ -1,0 +1,198 @@
+--------------------------------------------
+-- CONFIG: Chest Locations
+--------------------------------------------
+local betChest = peripheral.wrap("bottom")  -- Player bet chest
+local bankChest = peripheral.wrap("back")   -- Casino bankroll chest
+
+--------------------------------------------
+-- Utility: Find bet in chest
+--------------------------------------------
+local function getBet()
+    for slot = 1, betChest.size() do
+        local item = betChest.getItemDetail(slot)
+        if item and item.name == "minecraft:diamond" then
+            return slot, item.count
+        end
+    end
+    return nil, 0
+end
+
+--------------------------------------------
+-- CARD / BLACKJACK LOGIC
+--------------------------------------------
+
+-- Draws one card, values follow blackjack rules.
+local function drawCard()
+    -- 2–10 normal cards
+    -- 11 = Ace
+    -- 12–14 = J/Q/K = 10
+    local card = math.random(2, 14)
+    if card >= 12 then
+        return 10
+    elseif card == 11 then
+        return 11 -- Ace is 11 by default
+    else
+        return card
+    end
+end
+
+-- Calculates the total of a hand with Ace handling (11→1 if needed)
+local function handValue(cards)
+    local total = 0
+    local aces = 0
+
+    for _, card in ipairs(cards) do
+        total = total + card
+        if card == 11 then
+            aces = aces + 1
+        end
+    end
+
+    -- Convert Aces from 11 → 1 until below 22
+    while total > 21 and aces > 0 do
+        total = total - 10
+        aces = aces - 1
+    end
+
+    return total
+end
+
+--------------------------------------------
+-- PLAYER TURN
+--------------------------------------------
+local function playerTurn(playerCards)
+    while true do
+        local total = handValue(playerCards)
+        print("\nYour cards: " .. table.concat(playerCards, ", "))
+        print("Total: " .. total)
+
+        if total > 21 then
+            print("BUST!")
+            return total
+        end
+
+        print("Hit or Stand? (h/s)")
+        local choice = read()
+
+        if choice == "h" then
+            print("You draw a card.")
+            table.insert(playerCards, drawCard())
+
+        elseif choice == "s" then
+            print("You stand.")
+            return handValue(playerCards)
+
+        else
+            print("Please type 'h' or 's'.")
+        end
+    end
+end
+
+--------------------------------------------
+-- DEALER TURN
+--------------------------------------------
+local function dealerTurn(dealerCards)
+    print("\nDealer reveals: " .. table.concat(dealerCards, ", "))
+    local total = handValue(dealerCards)
+    print("Dealer total: " .. total)
+
+    while total < 17 do
+        print("Dealer hits...")
+        table.insert(dealerCards, drawCard())
+        total = handValue(dealerCards)
+        print("Dealer now has: " .. table.concat(dealerCards, ", ") ..
+              " (Total: " .. total .. ")")
+    end
+
+    return total
+end
+
+--------------------------------------------
+-- COMPLETE BLACKJACK ROUND
+--------------------------------------------
+local function playBlackjack()
+    print("Starting Blackjack...")
+
+    -- Initial deal
+    local playerCards = { drawCard(), drawCard() }
+    local dealerCards = { drawCard(), drawCard() }
+
+    print("\nYour cards: " ..
+        table.concat(playerCards, ", ") ..
+        " (Total: " .. handValue(playerCards) .. ")")
+
+    print("Dealer shows: " .. dealerCards[1])
+
+    -- Player phase
+    local playerTotal = playerTurn(playerCards)
+    if playerTotal > 21 then
+        print("Player busts. Dealer wins.")
+        return "lose"
+    end
+
+    -- Dealer phase
+    print("\nDealer's turn...")
+    local dealerTotal = dealerTurn(dealerCards)
+
+    if dealerTotal > 21 then
+        print("Dealer busts — you win!")
+        return "win"
+    end
+
+    -- Compare totals
+    if playerTotal > dealerTotal then
+        print("You win!")
+        return "win"
+    elseif dealerTotal > playerTotal then
+        print("Dealer wins.")
+        return "lose"
+    else
+        print("Tie — house wins ties.")
+        return "lose"
+    end
+end
+
+--------------------------------------------
+-- PAYOUT SYSTEM
+--------------------------------------------
+local function payout(betAmount, result)
+    local slot, amount = getBet()
+    if not slot then
+        print("ERROR: Could not find bet to remove.")
+        return
+    end
+
+    -- Remove the player's bet from the chest
+    betChest.removeItemFromSlot(slot, betAmount)
+
+    if result == "win" then
+        local payoutAmount = betAmount * 2
+        print("Paying out "..payoutAmount.." diamonds...")
+
+        -- Push from bank to player chest (bottom)
+        -- YOU MUST PUT DIAMONDS IN BANK SLOT 1
+        bankChest.pushItems("bottom", 1, payoutAmount)
+    else
+        print("Casino keeps the diamonds.")
+    end
+end
+
+--------------------------------------------
+-- MAIN LOOP
+--------------------------------------------
+print("Welcome to the Blackjack Casino!")
+print("Place diamonds in the chest below to begin.")
+
+while true do
+    sleep(1)
+
+    local slot, bet = getBet()
+    if bet > 0 then
+        print("\n-----------------------------------")
+        print("Detected bet of "..bet.." diamonds.")
+        local result = playBlackjack()
+        payout(bet, result)
+        print("Round complete.")
+        print("Place diamonds for another round.")
+    end
+end
