@@ -145,20 +145,25 @@ end
 local function payout(betAmount, result)
     local slot, amount = getBet()
     if not slot then
-        print("ERROR: Could not find bet to remove.")
+        print("ERROR: Could not find bet to collect.")
         return
     end
 
-    betChest.removeItemFromSlot(slot, betAmount)
+    -- Move the player's bet to the bank chest (casino keeps or holds it)
+    betChest.pushItems("back", slot, betAmount)
 
     if result == "win" then
         local payoutAmount = betAmount * 2
-        print("Paying out " .. payoutAmount .. " diamonds.")
+        print("Paying out " .. payoutAmount .. " diamonds...")
+
+        -- Give diamonds back to the player
+        -- Make sure the diamonds are in slot 1 of the bank chest
         bankChest.pushItems("bottom", 1, payoutAmount)
     else
         print("Casino keeps the diamonds.")
     end
 end
+
 
 --========================================--
 -- MAIN LOOP
