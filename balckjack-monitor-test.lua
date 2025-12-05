@@ -7,17 +7,15 @@ local betChest = peripheral.wrap("bottom")  -- player chest (bets & winnings)
 local bankChest = peripheral.wrap("back")   -- casino bank chest
 local mon = peripheral.wrap("right")        -- advanced monitor on the right
 
--- Seed RNG
 math.randomseed(os.time())
 
--- Monitor setup
 mon.setTextScale(0.5)
 mon.setBackgroundColor(colors.black)
 mon.setTextColor(colors.white)
 mon.clear()
 
 --========================================--
--- HELPER FUNCTIONS (DRAWING / TEXT)
+-- HELPER FUNCTIONS
 --========================================--
 
 local function clearLine(y)
@@ -36,8 +34,6 @@ local function centerText(y, text, color)
 end
 
 local function drawCardAscii(x, y, value, hidden)
-    -- Draw a 3-line ASCII card starting at (x,y)
-    -- hidden = true -> show "??"
     local label
     if hidden then
         label = "??"
@@ -49,15 +45,14 @@ local function drawCardAscii(x, y, value, hidden)
         end
     end
 
-    -- Card is 7 characters wide: "+-----+"
     mon.setCursorPos(x, y)
     mon.write("+-----+")
+
     mon.setCursorPos(x, y + 1)
     local inside = " " .. label .. " "
-    while #inside < 5 do
-        inside = inside .. " "
-    end
+    while #inside < 5 do inside = inside .. " " end
     mon.write("|" .. inside .. "|")
+
     mon.setCursorPos(x, y + 2)
     mon.write("+-----+")
 end
@@ -66,27 +61,15 @@ local function showHands(playerCards, dealerCards, hideDealer)
     mon.clear()
     centerText(1, "BLACKJACK CASINO", colors.yellow)
 
-    -- Dealer area
     centerText(3, "Dealer:", colors.red)
-
     local startX = 2
     local yDealer = 5
     for i, card in ipairs(dealerCards) do
         local x = startX + (i - 1) * 9
-        local hidden = false
-        if hideDealer and i >= 2 then
-            hidden = true
-        end
+        local hidden = (hideDealer and i >= 2)
         drawCardAscii(x, yDealer, card, hidden)
     end
 
-    if not hideDealer then
-        local dealerTotal = 0
-        -- we have a function later, but can't call before it's defined
-        -- we'll redraw totals after the function definition
-    end
-
-    -- Player area
     centerText(11, "Player:", colors.green)
     local yPlayer = 13
     for i, card in ipairs(playerCards) do
@@ -96,28 +79,37 @@ local function showHands(playerCards, dealerCards, hideDealer)
 end
 
 --========================================--
--- CHEST / BET LOGIC
+-- CHEST LOGIC (MULTI-SLOT BETS + PAYOUTS)
 --========================================--
 
 local function getBet()
-    -- Find diamonds in the bet chest
+    local total = 0
+    local slots = {}
+
     for slot = 1, betChest.size() do
         local item = betChest.getItemDetail(slot)
         if item and item.name == "minecraft:diamond" then
-            return slot, item.count
+            total = total + item.count
+            table.insert(slots, {slot = slot, count = item.count})
         end
     end
-    return nil, 0
+
+    return total, slots
 end
 
 local function isChestEmpty()
     for slot = 1, betChest.size() do
-        local item = betChest.getItemDetail(slot)
-        if item then
+        if betChest.getItemDetail(slot) then
             return false
         end
     end
     return true
+end
+
+local function removeBetDiamonds(slotInfo)
+    for _, entry in ipairs(slotInfo) do
+        betChest.pushItems("back", entry.slot, entry.count)
+    end
 end
 
 --========================================--
@@ -125,29 +117,21 @@ end
 --========================================--
 
 local function drawCard()
-    -- 2-10 = numeric, 11 = Ace, 12-14 = face cards (value 10)
-    local card = math.random(2, 14)
-    if card >= 12 then
-        return 10
-    elseif card == 11 then
-        return 11
-    else
-        return card
-    end
+    local c = math.random(2, 14)
+    if c >= 12 then return 10 end
+    if c == 11 then return 11 end
+    return c
 end
 
 local function handValue(cards)
     local total = 0
     local aces = 0
 
-    for _, card in ipairs(cards) do
-        total = total + card
-        if card == 11 then
-            aces = aces + 1
-        end
+    for _, c in ipairs(cards) do
+        total = total + c
+        if c == 11 then aces = aces + 1 end
     end
 
-    -- Turn Aces from 11 -> 1 if needed
     while total > 21 and aces > 0 do
         total = total - 10
         aces = aces - 1
@@ -156,58 +140,54 @@ local function handValue(cards)
     return total
 end
 
--- now we can extend showHands to also show totals
 local function showHandsWithTotals(playerCards, dealerCards, hideDealer)
     showHands(playerCards, dealerCards, hideDealer)
 
-    if not hideDealer then
-        local dealerTotal = handValue(dealerCards)
-        centerText(9, "Dealer Total: " .. dealerTotal, colors.white)
-    else
+    if hideDealer then
         centerText(9, "Dealer Showing", colors.white)
+    else
+        centerText(9, "Dealer Total: " .. handValue(dealerCards), colors.white)
     end
 
-    local playerTotal = handValue(playerCards)
-    centerText(17, "Your Total: " .. playerTotal, colors.white)
+    centerText(17, "Your Total: " .. handValue(playerCards), colors.white)
 end
 
 --========================================--
--- PLAYER TURN (TOUCH INPUT)
+-- PLAYER TURN (TOUCH UI)
 --========================================--
 
 local function playerTurn(playerCards, dealerCards)
     while true do
         showHandsWithTotals(playerCards, dealerCards, true)
 
-        centerText(20, "Tap HIT or STAND on the monitor", colors.white)
-        -- Draw simple "buttons"
-        local hitText = "[ HIT ]"
-        local standText = "[ STAND ]"
+        centerText(20, "Tap HIT or STAND", colors.white)
 
+        local hit = "[ HIT ]"
+        local stand = "[ STAND ]"
         local w, _ = mon.getSize()
-        local hitX = math.floor(w / 4 - #hitText / 2)
-        local standX = math.floor(3 * w / 4 - #standText / 2)
-        local buttonY = 22
 
-        mon.setCursorPos(hitX, buttonY)
-        mon.write(hitText)
-        mon.setCursorPos(standX, buttonY)
-        mon.write(standText)
+        local hitX = math.floor(w / 4 - #hit / 2)
+        local standX = math.floor(3 * w / 4 - #stand / 2)
+        local yButton = 22
 
-        local playerTotal = handValue(playerCards)
-        if playerTotal > 21 then
-            return playerTotal
+        mon.setCursorPos(hitX, yButton)
+        mon.write(hit)
+
+        mon.setCursorPos(standX, yButton)
+        mon.write(stand)
+
+        local pv = handValue(playerCards)
+        if pv > 21 then
+            return pv
         end
 
         local event, side, x, y = os.pullEvent("monitor_touch")
 
-        -- Check HIT press
-        if y == buttonY and x >= hitX and x <= hitX + #hitText - 1 then
+        if y == yButton and x >= hitX and x <= hitX + #hit - 1 then
             table.insert(playerCards, drawCard())
         end
 
-        -- Check STAND press
-        if y == buttonY and x >= standX and x <= standX + #standText - 1 then
+        if y == yButton and x >= standX and x <= standX + #stand - 1 then
             return handValue(playerCards)
         end
     end
@@ -218,7 +198,6 @@ end
 --========================================--
 
 local function dealerTurn(playerCards, dealerCards)
-    -- Reveal dealer hand and then draw until 17+
     while handValue(dealerCards) < 17 do
         showHandsWithTotals(playerCards, dealerCards, false)
         centerText(19, "Dealer drawing...", colors.white)
@@ -231,32 +210,33 @@ local function dealerTurn(playerCards, dealerCards)
 end
 
 --========================================--
--- PLAY AGAIN / CASH OUT SCREEN
+-- CONTINUE / CASH-OUT LOGIC
 --========================================--
 
 local function askPlayAgain()
-    local w, _ = mon.getSize()
     centerText(19, "Play again?", colors.white)
 
-    local yesText = "[ YES ]"
-    local noText = "[ NO ]"
-    local yesX = math.floor(w / 4 - #yesText / 2)
-    local noX = math.floor(3 * w / 4 - #noText / 2)
-    local buttonY = 21
+    local yes = "[ YES ]"
+    local no = "[ NO ]"
+    local w, _ = mon.getSize()
 
-    mon.setCursorPos(yesX, buttonY)
-    mon.write(yesText)
-    mon.setCursorPos(noX, buttonY)
-    mon.write(noText)
+    local yesX = math.floor(w / 4 - #yes / 2)
+    local noX = math.floor(3 * w / 4 - #no / 2)
+    local yButton = 21
+
+    mon.setCursorPos(yesX, yButton)
+    mon.write(yes)
+    mon.setCursorPos(noX, yButton)
+    mon.write(no)
 
     while true do
         local event, side, x, y = os.pullEvent("monitor_touch")
 
-        if y == buttonY and x >= yesX and x <= yesX + #yesText - 1 then
+        if y == yButton and x >= yesX and x <= yesX + #yes - 1 then
             return "yes"
         end
 
-        if y == buttonY and x >= noX and x <= noX + #noText - 1 then
+        if y == yButton and x >= noX and x <= noX + #no - 1 then
             return "no"
         end
     end
@@ -268,12 +248,7 @@ local function waitForChestEmpty()
     centerText(12, "from the chest below...", colors.white)
     centerText(14, "Waiting for chest to be empty.", colors.white)
 
-    while true do
-        if isChestEmpty() then
-            break
-        end
-        sleep(0.5)
-    end
+    while not isChestEmpty() do sleep(0.5) end
 
     mon.clear()
     centerText(10, "Thanks for playing!", colors.white)
@@ -285,62 +260,57 @@ end
 --========================================--
 
 local function playBlackjackRound()
-    -- Deal initial hands
-    local playerCards = { drawCard(), drawCard() }
-    local dealerCards = { drawCard(), drawCard() }
+    local player = { drawCard(), drawCard() }
+    local dealer = { drawCard(), drawCard() }
 
-    -- Player phase
-    local playerTotal = playerTurn(playerCards, dealerCards)
-    if playerTotal > 21 then
-        showHandsWithTotals(playerCards, dealerCards, false)
+    local pTotal = playerTurn(player, dealer)
+    if pTotal > 21 then
+        showHandsWithTotals(player, dealer, false)
         centerText(19, "You bust! Dealer wins.", colors.red)
         sleep(2)
         return "lose"
     end
 
-    -- Dealer phase
-    local dealerTotal = dealerTurn(playerCards, dealerCards)
+    local dTotal = dealerTurn(player, dealer)
 
-    if dealerTotal > 21 then
+    if dTotal > 21 then
         centerText(19, "Dealer busts! You win!", colors.green)
         sleep(2)
         return "win"
     end
 
-    local finalText
-    local result
-
-    if playerTotal > dealerTotal then
-        finalText = "You win!"
-        result = "win"
-    elseif dealerTotal > playerTotal then
-        finalText = "Dealer wins!"
-        result = "lose"
+    if pTotal > dTotal then
+        centerText(19, "You win!", colors.green)
+        sleep(2)
+        return "win"
     else
-        finalText = "Push (tie) - house wins."
-        result = "lose"
+        centerText(19, "Dealer wins!", colors.red)
+        sleep(2)
+        return "lose"
     end
-
-    centerText(19, finalText, result == "win" and colors.green or colors.red)
-    sleep(2)
-    return result
 end
 
 --========================================--
--- PAYOUT LOGIC
+-- PAYOUT (MULTI-SLOT PAYOUT)
 --========================================--
 
-local function payout(betAmount, result)
-    -- Move the bet from player chest to bank chest
-    local slot, amount = getBet()
-    if slot and betAmount > 0 then
-        betChest.pushItems("back", slot, betAmount)
-    end
+local function payout(betAmount, slotInfo, result)
+    removeBetDiamonds(slotInfo)
 
     if result == "win" then
-        -- Pay 2x bet back to player chest (winnings)
         local payoutAmount = betAmount * 2
-        bankChest.pushItems("bottom", 1, payoutAmount)
+        local needed = payoutAmount
+
+        for slot = 1, bankChest.size() do
+            local item = bankChest.getItemDetail(slot)
+            if item and item.name == "minecraft:diamond" then
+                local moved = bankChest.pushItems("bottom", slot, needed)
+                needed = needed - moved
+                if needed <= 0 then
+                    break
+                end
+            end
+        end
     end
 end
 
@@ -348,41 +318,38 @@ end
 -- MAIN LOOP
 --========================================--
 
-local function showWaitingForBet()
+local function showWaiting()
     mon.clear()
     centerText(10, "Place diamonds in the", colors.white)
     centerText(12, "chest below to play!", colors.white)
 end
 
-showWaitingForBet()
+showWaiting()
 
 while true do
     sleep(1)
+    local bet, slotInfo = getBet()
 
-    local slot, bet = getBet()
     if bet > 0 then
-        -- We detected a bet, play a round
         mon.clear()
         centerText(10, "Bet detected: " .. bet .. " diamonds.", colors.white)
         sleep(1)
 
         local result = playBlackjackRound()
-        payout(bet, result)
+        payout(bet, slotInfo, result)
 
         if result == "win" then
-            -- Ask if they want to continue or cash out
-            showWaitingForBet()
+            showWaiting()
             centerText(16, "Your winnings are in the chest.", colors.green)
-            local answer = askPlayAgain()
-            if answer == "no" then
+            local ans = askPlayAgain()
+
+            if ans == "no" then
                 waitForChestEmpty()
-                showWaitingForBet()
-            else
-                showWaitingForBet()
             end
+
+            showWaiting()
         else
-            -- Just go back to waiting for a bet
-            showWaitingForBet()
+            showWaiting()
         end
     end
 end
